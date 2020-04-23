@@ -6,12 +6,14 @@ import logging
 import argparse
 import math
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+
 import sys
 from time import strftime, localtime
 import random
 import numpy
 
-from pytorch_transformers import BertModel
+from transformers import BertModel
 
 from sklearn import metrics
 import torch
@@ -28,10 +30,17 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 logger.addHandler(logging.StreamHandler(sys.stdout))
 
+import tensorboardX
+
 
 class Instructor:
     def __init__(self, opt):
         self.opt = opt
+        self.writer = tensorboardX.SummaryWriter(comment=opt.log_name)
+
+        if not os.path.exists(opt.output_path):
+            os.mkdir(opt.output_path)
+
 
         if 'bert' in opt.model_name:
             tokenizer = Tokenizer4Bert(opt.max_seq_len, opt.pretrained_bert_name)
@@ -41,11 +50,12 @@ class Instructor:
             tokenizer = build_tokenizer(
                 fnames=[opt.dataset_file['train'], opt.dataset_file['test']],
                 max_seq_len=opt.max_seq_len,
-                dat_fname='{0}_tokenizer.dat'.format(opt.dataset))
+                dat_fname='{}/{}_tokenizer.dat'.format(opt.output_path, opt.dataset))
             embedding_matrix = build_embedding_matrix(
                 word2idx=tokenizer.word2idx,
                 embed_dim=opt.embed_dim,
-                dat_fname='{0}_{1}_embedding_matrix.dat'.format(str(opt.embed_dim), opt.dataset))
+                dat_fname='{}/{}_{}_embedding_matrix.dat'.format(opt.output_path,str(opt.embed_dim), opt.dataset),
+                w2v_file=opt.w2v_file)
             self.model = opt.model_class(embedding_matrix, opt).to(opt.device)
 
         self.trainset = ABSADataset(opt.dataset_file['train'], tokenizer)
@@ -116,6 +126,13 @@ class Instructor:
                     train_acc = n_correct / n_total
                     train_loss = loss_total / n_total
                     logger.info('loss: {:.4f}, acc: {:.4f}'.format(train_loss, train_acc))
+                    self.writer.add_scalar('acc',train_acc, global_step)
+                    self.writer.add_scalar('loss', train_loss, global_step)
+
+                if global_step % self.opt.eval_step == 0:
+                    val_acc, val_f1 = self._evaluate_acc_f1(val_data_loader)
+                    self.writer.add_scalar('val_acc',val_acc, global_step)
+                    self.writer.add_scalar('val_f1', val_f1, global_step)
 
             val_acc, val_f1 = self._evaluate_acc_f1(val_data_loader)
             logger.info('> val_acc: {:.4f}, val_f1: {:.4f}'.format(val_acc, val_f1))
@@ -154,6 +171,7 @@ class Instructor:
 
         acc = n_correct / n_total
         f1 = metrics.f1_score(t_targets_all.cpu(), torch.argmax(t_outputs_all, -1).cpu(), labels=[0, 1, 2], average='macro')
+        self.model.train()
         return acc, f1
 
     def run(self):
@@ -201,6 +219,30 @@ def main():
     parser.add_argument('--local_context_focus', default='cdm', type=str, help='local context focus mode, cdw or cdm')
     parser.add_argument('--SRD', default=3, type=int, help='semantic-relative-distance, see the paper of LCF-BERT model')
     opt = parser.parse_args()
+
+    # 自定义参数
+    opt.model_name = 'lstm'
+    opt.dataset = 'laptop'
+    opt.learning_rate = 5e-5
+    opt.max_seq_len = 120
+    opt.num_epoch = 20
+    opt.batch_size = 16
+    opt.polarities_dim = 3
+    opt.hops = 3
+    opt.embed_dim = 300
+    opt.hidden_dim = 300
+    opt.bert_dim = 768
+    opt.pretrained_bert_name = '/root/models/english/bert/pytorch/bert-base-uncased'
+    opt.w2v_file = '/root/models/english/Glove/glove.840B.300d.txt'
+    opt.device = 'cuda:0'
+    opt.seed = 42
+    opt.valset_ratio = 0.1
+    opt.SRD = 3
+    opt.log_step = 50
+    opt.eval_step = 50
+    opt.output_path = 'output'
+    opt.log_name = opt.model_name+'_1'
+
 
     if opt.seed is not None:
         random.seed(opt.seed)
@@ -282,7 +324,7 @@ def main():
         if opt.device is None else torch.device(opt.device)
 
     log_file = '{}-{}-{}.log'.format(opt.model_name, opt.dataset, strftime("%y%m%d-%H%M", localtime()))
-    logger.addHandler(logging.FileHandler(log_file))
+    # logger.addHandler(logging.FileHandler(log_file))
 
     ins = Instructor(opt)
     ins.run()

@@ -8,7 +8,7 @@ import pickle
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from pytorch_transformers import BertTokenizer
+from transformers import BertTokenizer
 
 
 def build_tokenizer(fnames, max_seq_len, dat_fname):
@@ -38,20 +38,23 @@ def _load_word_vec(path, word2idx=None):
     word_vec = {}
     for line in fin:
         tokens = line.rstrip().split()
-        if word2idx is None or tokens[0] in word2idx.keys():
-            word_vec[tokens[0]] = np.asarray(tokens[1:], dtype='float32')
+        try:
+            if word2idx is None or tokens[0] in word2idx.keys():
+                word_vec[tokens[0]] = np.asarray(tokens[1:], dtype='float32')
+        except:
+            continue
     return word_vec
 
 
-def build_embedding_matrix(word2idx, embed_dim, dat_fname):
+def build_embedding_matrix(word2idx, embed_dim, dat_fname, w2v_file):
     if os.path.exists(dat_fname):
         print('loading embedding_matrix:', dat_fname)
         embedding_matrix = pickle.load(open(dat_fname, 'rb'))
     else:
         print('loading word vectors...')
         embedding_matrix = np.zeros((len(word2idx) + 2, embed_dim))  # idx 0 and len(word2idx)+1 are all-zeros
-        fname = './glove.twitter.27B/glove.twitter.27B.' + str(embed_dim) + 'd.txt' \
-            if embed_dim != 300 else './glove.42B.300d.txt'
+        fname = w2v_file
+        # fname = './glove.twitter.27B/glove.twitter.27B.' + str(embed_dim) + 'd.txt' if embed_dim != 300 else './glove.42B.300d.txt'
         word_vec = _load_word_vec(fname, word2idx=word2idx)
         print('building embedding_matrix:', dat_fname)
         for word, i in word2idx.items():
