@@ -1,14 +1,12 @@
-# -*- coding: utf-8 -*-
-# file: infer.py
-# author: songyouwei <youwei0314@gmail.com>
-# Copyright (C) 2019. All Rights Reserved.
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 import torch
 import torch.nn.functional as F
 import argparse
 
 from data_utils import build_tokenizer, build_embedding_matrix
-from models import IAN, MemNet, ATAE_LSTM, AOA
+from models import IAN, MemNet, ATAE_LSTM, AOA, LSTM, TD_LSTM
 
 
 class Inferer:
@@ -18,11 +16,13 @@ class Inferer:
         self.tokenizer = build_tokenizer(
             fnames=[opt.dataset_file['train'], opt.dataset_file['test']],
             max_seq_len=opt.max_seq_len,
-            dat_fname='{0}_tokenizer.dat'.format(opt.dataset))
+            dat_fname='{}/{}_tokenizer.dat'.format(opt.output_path, opt.dataset))
+
         embedding_matrix = build_embedding_matrix(
             word2idx=self.tokenizer.word2idx,
             embed_dim=opt.embed_dim,
-            dat_fname='{0}_{1}_embedding_matrix.dat'.format(str(opt.embed_dim), opt.dataset))
+            dat_fname='{}/{}_{}_embedding_matrix.dat'.format(opt.output_path, str(opt.embed_dim), opt.dataset),
+            w2v_file=opt.w2v_file)
         self.model = opt.model_class(embedding_matrix, opt)
         print('loading model {0} ...'.format(opt.model_name))
         self.model.load_state_dict(torch.load(opt.state_dict_path))
@@ -46,6 +46,8 @@ class Inferer:
 
 if __name__ == '__main__':
     model_classes = {
+        'lstm': LSTM,
+        'td_lstm': TD_LSTM,
         'atae_lstm': ATAE_LSTM,
         'ian': IAN,
         'memnet': MemNet,
@@ -53,24 +55,30 @@ if __name__ == '__main__':
     }
     # set your trained models here
     model_state_dict_paths = {
-        'atae_lstm': 'state_dict/atae_lstm_restaurant_acc0.7786',
-        'ian': 'state_dict/ian_restaurant_acc0.7911',
-        'memnet': 'state_dict/memnet_restaurant_acc0.7911',
-        'aoa': 'state_dict/aoa_restaurant_acc0.8063',
+        'lstm':'state_dict/lstm_laptop_val_acc0.7414',
+        'atae_lstm': 'state_dict/',
+        'ian': 'state_dict/',
+        'memnet': 'state_dict/',
+        'aoa': 'state_dict/',
     }
+
+    # 配置inference模型参数
     class Option(object): pass
     opt = Option()
-    opt.model_name = 'ian'
+    opt.model_name = 'lstm'
     opt.model_class = model_classes[opt.model_name]
-    opt.dataset = 'restaurant'
+    opt.w2v_file = '/root/models/english/Glove/glove.840B.300d.txt'
+    opt.output_path = 'output'
+    opt.dataset = 'laptop'
     opt.dataset_file = {
-        'train': './datasets/semeval14/Restaurants_Train.xml.seg',
-        'test': './datasets/semeval14/Restaurants_Test_Gold.xml.seg'
+        'train': 'datasets/semeval14/Laptops_Train.xml.seg',
+        'test': 'datasets/semeval14/Laptops_Test_Gold.xml.seg'
     }
+
     opt.state_dict_path = model_state_dict_paths[opt.model_name]
     opt.embed_dim = 300
     opt.hidden_dim = 300
-    opt.max_seq_len = 80
+    opt.max_seq_len = 120
     opt.polarities_dim = 3
     opt.hops = 3
     opt.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
