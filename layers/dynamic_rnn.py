@@ -60,8 +60,9 @@ class DynamicLSTM(nn.Module):
         x_sort_idx = torch.sort(-x_len)[1].long()
         x_unsort_idx = torch.sort(x_sort_idx)[1].long()
         x_len = x_len[x_sort_idx]
-        x = x[x_sort_idx]
+        x = x[x_sort_idx]   #x [16.120,600], x_sort_idx [16]
         """pack"""
+        # 按照长度进行排序
         x_emb_p = torch.nn.utils.rnn.pack_padded_sequence(x, x_len, batch_first=self.batch_first)
         
         # process using the selected RNN
