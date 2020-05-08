@@ -3,7 +3,6 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 import torch
 import torch.nn.functional as F
-import argparse
 
 from data_utils import build_tokenizer, build_embedding_matrix
 from models import IAN, MemNet, ATAE_LSTM, AOA, LSTM, TD_LSTM
@@ -55,7 +54,7 @@ if __name__ == '__main__':
     }
     # set your trained models here
     model_state_dict_paths = {
-        'lstm':'state_dict/lstm_laptop_val_acc0.7414',
+        'lstm':'state_dict/lstm_mams_val_acc0.651',
         'atae_lstm': 'state_dict/',
         'ian': 'state_dict/',
         'memnet': 'state_dict/',
@@ -69,11 +68,11 @@ if __name__ == '__main__':
     opt.model_class = model_classes[opt.model_name]
     opt.w2v_file = '/root/models/english/Glove/glove.840B.300d.txt'
     opt.output_path = 'output'
-    opt.dataset = 'laptop'
+    opt.dataset = 'mams'
     opt.dataset_file = {
-        'train': 'datasets/semeval14/Laptops_Train.xml.seg',
-        'test': 'datasets/semeval14/Laptops_Test_Gold.xml.seg'
-    }
+            'train': 'datasets/MAMS/train_data/train.txt',
+            'test': 'datasets/MAMS/train_data/dev.txt'
+        }
 
     opt.state_dict_path = model_state_dict_paths[opt.model_name]
     opt.embed_dim = 300
@@ -84,5 +83,5 @@ if __name__ == '__main__':
     opt.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     inf = Inferer(opt)
-    t_probs = inf.evaluate(['happy memory', 'the service is terrible', 'just normal food'])
+    t_probs = inf.evaluate(['From the speed to the multi touch gestures this operating system beats Windows easily .'])
     print(t_probs.argmax(axis=-1) - 1)

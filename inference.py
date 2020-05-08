@@ -9,20 +9,15 @@ import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 import sys
-from time import strftime, localtime
 import random
 import numpy
-
 from transformers import BertModel
-
 from sklearn import metrics
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, random_split
-
 from data_utils import build_tokenizer, build_embedding_matrix, Tokenizer4Bert, ABSADataset
-
-from models import LSTM, IAN, MemNet, RAM, TD_LSTM, TC_LSTM, Cabasc, ATAE_LSTM, TNet_LF, AOA, MGAN, LCF_BERT
+from models import LSTM, IAN, MemNet, RAM, TD_LSTM, Cabasc, ATAE_LSTM, TNet_LF, AOA, MGAN, LCF_BERT
 from models.aen import CrossEntropyLoss_LSR, AEN_BERT
 from models.bert_spc import BERT_SPC
 
@@ -41,7 +36,6 @@ class Instructor:
         if not os.path.exists(opt.output_path):
             os.mkdir(opt.output_path)
 
-
         if 'bert' in opt.model_name:
             tokenizer = Tokenizer4Bert(opt.max_seq_len, opt.pretrained_bert_name)
             bert = BertModel.from_pretrained(opt.pretrained_bert_name)
@@ -58,15 +52,7 @@ class Instructor:
                 w2v_file=opt.w2v_file)
             self.model = opt.model_class(embedding_matrix, opt).to(opt.device)
 
-        self.trainset = ABSADataset(opt.dataset_file['train'], tokenizer)
         self.testset = ABSADataset(opt.dataset_file['test'], tokenizer)
-        assert 0 <= opt.valset_ratio < 1
-        if opt.valset_ratio > 0:
-            valset_len = int(len(self.trainset) * opt.valset_ratio)
-            self.trainset, self.valset = random_split(self.trainset, (len(self.trainset)-valset_len, valset_len))
-        else:
-            self.valset = self.testset
-
         if opt.device.type == 'cuda':
             logger.info('cuda memory allocated: {}'.format(torch.cuda.memory_allocated(device=opt.device.index)))
         self._print_args()
@@ -95,71 +81,20 @@ class Instructor:
                             stdv = 1. / math.sqrt(p.shape[0])
                             torch.nn.init.uniform_(p, a=-stdv, b=stdv)
 
-    def _train(self, criterion, optimizer, train_data_loader, val_data_loader):
-        max_val_acc = 0
-        max_val_f1 = 0
-        global_step = 0
-        path = None
-        for epoch in range(self.opt.num_epoch):
-            logger.info('>' * 100)
-            logger.info('epoch: {}'.format(epoch))
-            n_correct, n_total, loss_total = 0, 0, 0
-            # switch model to training mode
-            self.model.train()
-            for i_batch, sample_batched in enumerate(train_data_loader):
-                global_step += 1
-                # clear gradient accumulators
-                optimizer.zero_grad()
-
-                inputs = [sample_batched[col].to(self.opt.device) for col in self.opt.inputs_cols]
-                outputs = self.model(inputs)
-                targets = sample_batched['polarity'].to(self.opt.device)
-
-                loss = criterion(outputs, targets)
-                loss.backward()
-                optimizer.step()
-
-                n_correct += (torch.argmax(outputs, -1) == targets).sum().item()
-                n_total += len(outputs)
-                loss_total += loss.item() * len(outputs)
-                if global_step % self.opt.log_step == 0:
-                    train_acc = n_correct / n_total
-                    train_loss = loss_total / n_total
-                    logger.info('loss: {:.4f}, acc: {:.4f}'.format(train_loss, train_acc))
-                    self.writer.add_scalar('acc',train_acc, global_step)
-                    self.writer.add_scalar('loss', train_loss, global_step)
-
-                if global_step % self.opt.eval_step == 0:
-                    val_acc, val_f1 = self._evaluate_acc_f1(val_data_loader)
-                    self.writer.add_scalar('val_acc',val_acc, global_step)
-                    self.writer.add_scalar('val_f1', val_f1, global_step)
-
-            val_acc, val_f1 = self._evaluate_acc_f1(val_data_loader)
-            logger.info('> val_acc: {:.4f}, val_f1: {:.4f}'.format(val_acc, val_f1))
-            if val_acc > max_val_acc:
-                max_val_acc = val_acc
-                if not os.path.exists('state_dict'):
-                    os.mkdir('state_dict')
-                path = 'state_dict/{0}_{1}_val_acc{2}'.format(self.opt.model_name, self.opt.dataset, round(val_acc, 4))
-                torch.save(self.model.state_dict(), path)
-                logger.info('>> saved: {}'.format(path))
-
-
-            if val_f1 > max_val_f1:
-                max_val_f1 = val_f1
-
-        return path
 
     def _evaluate_acc_f1(self, data_loader):
         n_correct, n_total = 0, 0
         t_targets_all, t_outputs_all = None, None
-        # switch model to evaluation mode
         self.model.eval()
+
+        results = []
         with torch.no_grad():
             for t_batch, t_sample_batched in enumerate(data_loader):
                 t_inputs = [t_sample_batched[col].to(self.opt.device) for col in self.opt.inputs_cols]
                 t_targets = t_sample_batched['polarity'].to(self.opt.device)
                 t_outputs = self.model(t_inputs)
+
+                results += torch.argmax(t_outputs, -1).tolist()
 
                 n_correct += (torch.argmax(t_outputs, -1) == t_targets).sum().item()
                 n_total += len(t_outputs)
@@ -173,8 +108,9 @@ class Instructor:
 
         acc = n_correct / n_total
         f1 = metrics.f1_score(t_targets_all.cpu(), torch.argmax(t_outputs_all, -1).cpu(), labels=[0, 1, 2], average='macro')
-        self.model.train()
-        return acc, f1
+        id2label = {0: '-1', 1: '0', 2: '1'}
+        results = [id2label[r] for r in results]
+        return acc, f1, results
 
     def run(self):
         # Loss and Optimizer
@@ -182,16 +118,26 @@ class Instructor:
         _params = filter(lambda p: p.requires_grad, self.model.parameters())
         optimizer = self.opt.optimizer(_params, lr=self.opt.learning_rate, weight_decay=self.opt.l2reg)
 
-        train_data_loader = DataLoader(dataset=self.trainset, batch_size=self.opt.batch_size, shuffle=True)
         test_data_loader = DataLoader(dataset=self.testset, batch_size=self.opt.batch_size, shuffle=False)
-        val_data_loader = DataLoader(dataset=self.valset, batch_size=self.opt.batch_size, shuffle=False)
 
         self._reset_params()
-        best_model_path = self._train(criterion, optimizer, train_data_loader, val_data_loader)
-        self.model.load_state_dict(torch.load(best_model_path))
+        self.model.load_state_dict(torch.load(self.opt.state_dict_path))
         self.model.eval()
-        test_acc, test_f1 = self._evaluate_acc_f1(test_data_loader)
+        test_acc, test_f1, results= self._evaluate_acc_f1(test_data_loader)
         logger.info('>> test_acc: {:.4f}, test_f1: {:.4f}'.format(test_acc, test_f1))
+
+        #保存预测数据
+        f = open(self.opt.dataset_file['test'], 'r')
+        lines = f.readlines()
+        f.close()
+        assert len(lines)/3 == len(results)
+        with open(self.opt.state_dict_path+'_results','w') as ff:
+            for i in range(0,len(lines),3):
+                ff.write(lines[i])
+                ff.write(lines[i+1])
+                ff.write(lines[i+2])
+                ff.write(results[0]+'\n')
+                del results[0]
 
 
 def main():
@@ -223,7 +169,7 @@ def main():
     opt = parser.parse_args()
 
     # 自定义参数
-    opt.model_name = 'tc_lstm'
+    opt.model_name = 'lstm'
     opt.dataset = 'mams'
     opt.learning_rate = 5e-5
     opt.max_seq_len = 60
@@ -234,8 +180,8 @@ def main():
     opt.embed_dim = 300
     opt.hidden_dim = 300
     opt.bert_dim = 768
-    opt.pretrained_bert_name = os.path.expanduser('~')+'models/english/bert/pytorch/bert-base-uncased'
-    opt.w2v_file = os.path.expanduser('~')+'/models/english/Glove/glove.840B.300d.txt'
+    opt.pretrained_bert_name = '/root/models/english/bert/pytorch/bert-base-uncased'
+    opt.w2v_file = '/root/models/english/Glove/glove.840B.300d.txt'
     opt.device = 'cuda:0'
     opt.seed = 42
     opt.valset_ratio = 0
@@ -254,10 +200,18 @@ def main():
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
+    # set your trained models here
+    model_state_dict_paths = {
+        'lstm': 'state_dict/lstm_mams_val_acc0.5139',
+        'atae_lstm': 'state_dict/',
+        'ian': 'state_dict/',
+        'memnet': 'state_dict/',
+        'aoa': 'state_dict/',
+    }
+
     model_classes = {
         'lstm': LSTM,
         'td_lstm': TD_LSTM,
-        'tc_lstm': TC_LSTM,
         'atae_lstm': ATAE_LSTM,
         'ian': IAN,
         'memnet': MemNet,
@@ -289,14 +243,13 @@ def main():
             'test': './datasets/semeval14/Laptops_Test_Gold.xml.seg'
         },
         'mams': {
-            'train': 'datasets/MAMS/train_data_atsa/train.txt',
-            'test': 'datasets/MAMS/train_data_atsa/dev.txt'
+            'train': 'datasets/MAMS/train_data/train.txt',
+            'test': 'datasets/MAMS/train_data/dev.txt'
         }
     }
     input_colses = {
         'lstm': ['text_raw_indices'],
         'td_lstm': ['text_left_with_aspect_indices', 'text_right_with_aspect_indices'],
-        'tc_lstm': ['text_left_with_aspect_indices', 'text_right_with_aspect_indices', 'aspect_indices'],
         'atae_lstm': ['text_raw_indices', 'aspect_indices'],
         'ian': ['text_raw_indices', 'aspect_indices'],
         'memnet': ['text_raw_without_aspect_indices', 'aspect_indices'],
@@ -323,6 +276,7 @@ def main():
         'rmsprop': torch.optim.RMSprop,  # default lr=0.01
         'sgd': torch.optim.SGD,
     }
+    opt.state_dict_path = model_state_dict_paths[opt.model_name]
     opt.model_class = model_classes[opt.model_name]
     opt.dataset_file = dataset_files[opt.dataset]
     opt.inputs_cols = input_colses[opt.model_name]

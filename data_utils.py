@@ -2,7 +2,7 @@
 # file: data_utils.py
 # author: songyouwei <youwei0314@gmail.com>
 # Copyright (C) 2018. All Rights Reserved.
-
+import nltk
 import os
 import pickle
 import numpy as np
@@ -131,9 +131,19 @@ class ABSADataset(Dataset):
         lines = fin.readlines()
         fin.close()
 
+        def split_point(line):
+            new_line = []
+            for c in line:
+                if c in [',','.','!','?',';'] and new_line != [] and new_line[-1] != ' ':
+                    new_line.append(' ' + c)
+                else:
+                    new_line.append(c)
+            return ''.join(new_line)
+
         all_data = []
         for i in range(0, len(lines), 3):
-            text_left, _, text_right = [s.lower().strip() for s in lines[i].partition("$T$")]
+            text_left, _, text_right = [s.lower().strip() for s in split_point(lines[i]).partition("$T$")]
+
             aspect = lines[i + 1].lower().strip()
             polarity = lines[i + 2].strip()
 
@@ -147,6 +157,10 @@ class ABSADataset(Dataset):
             left_context_len = np.sum(text_left_indices != 0)
             aspect_len = np.sum(aspect_indices != 0)
             aspect_in_text = torch.tensor([left_context_len.item(), (left_context_len + aspect_len - 1).item()])
+
+            # 情感极性map
+            # label2id = {'-1':0, '0':1, '1':2}
+            # id2label = {0:'-1', 1:'0', 2:'1'}
             polarity = int(polarity) + 1
 
             text_bert_indices = tokenizer.text_to_sequence('[CLS] ' + text_left + " " + aspect + " " + text_right + ' [SEP] ' + aspect + " [SEP]")

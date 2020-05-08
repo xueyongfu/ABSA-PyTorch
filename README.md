@@ -1,5 +1,15 @@
 # ABSA-PyTorch
 
+> 代码主要来自 https://github.com/songyouwei/ABSA-PyTorch.git
+
+## 新增内容
+
+* 增加了2020MAMS数据集
+* 修改了源代码中对标点处理错误问题如,apple. --> apple .
+* 增加了TC-LSTM模型
+* 增加了模型推理的代码,inference.py
+
+
 > Aspect Based Sentiment Analysis, PyTorch Implementations.
 >
 > 基于方面的情感分析，使用PyTorch实现。
